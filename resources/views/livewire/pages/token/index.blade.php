@@ -116,6 +116,9 @@
                                         <x-nawasara-ui::icon-button icon="shield"
                                             tooltip="{{ $token->allowed_ips ? 'IP allow-list aktif — '.count($token->allowed_ips).' entri' : 'IP allow-list kosong (boleh dari mana saja)' }}"
                                             wire:click="openEditIps({{ $token->id }})" />
+                                        <x-nawasara-ui::icon-button icon="globe"
+                                            tooltip="{{ $token->allowed_origins ? 'Origin allow-list aktif — '.count($token->allowed_origins).' entri' : 'Origin allow-list kosong (boleh dari mana saja)' }}"
+                                            wire:click="openEditOrigins({{ $token->id }})" />
                                     @endcan
                                     @can('api.token.revoke')
                                         @unless ($token->isRevoked())
@@ -178,6 +181,23 @@
                     (mis. <code>10.0.0.0/8</code>). Kosongkan untuk tidak membatasi IP.
                 </p>
                 @error('allowedIpsInput') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+            </div>
+
+            <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Origin Allow-list (opsional)
+                </label>
+                <textarea wire:model="allowedOriginsInput" rows="3"
+                    placeholder="https://gasta.ponorogo.go.id&#10;http://localhost:5173"
+                    class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono
+                           focus:border-emerald-500 focus:ring-emerald-500
+                           dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"></textarea>
+                <p class="mt-1 text-xs text-gray-500 dark:text-neutral-400">
+                    Untuk consumer browser/SPA. Satu URL per baris (<code>scheme://host[:port]</code>).
+                    Request tanpa header <code>Origin</code> akan ditolak saat ada entri di sini —
+                    cocok untuk token yang dipakai SPA, BUKAN server-to-server.
+                </p>
+                @error('allowedOriginsInput') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
             </div>
 
             <div>
@@ -391,6 +411,41 @@
                 </x-nawasara-ui::button>
                 <x-nawasara-ui::button type="submit" color="primary">
                     Simpan IP Allow-list
+                </x-nawasara-ui::button>
+            </div>
+        </form>
+    </x-nawasara-ui::modal>
+
+    {{-- =========================================================== --}}
+    {{-- Edit Origin allow-list modal                                 --}}
+    {{-- =========================================================== --}}
+    <x-nawasara-ui::modal wire:model="showEditOrigins" maxWidth="2xl"
+        title="Edit Origin Allow-list"
+        subtitle="Batasi domain (Origin header) yang boleh memakai token ini — cocok untuk SPA. Kosongkan untuk tidak membatasi.">
+        <form wire:submit="saveEditOrigins" class="space-y-4">
+            <div>
+                <textarea wire:model="editOriginsInput" rows="6"
+                    placeholder="https://gasta.ponorogo.go.id&#10;http://localhost:5173"
+                    class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono
+                           focus:border-emerald-500 focus:ring-emerald-500
+                           dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"></textarea>
+                <p class="mt-1 text-xs text-gray-500 dark:text-neutral-400">
+                    Satu URL per baris (<code>scheme://host[:port]</code>). Untuk dev local,
+                    tambahkan <code>http://localhost:PORT</code> dan/atau <code>http://127.0.0.1:PORT</code>.
+                    Request tanpa header <code>Origin</code> (curl, server-to-server) akan ditolak
+                    saat list ini terisi — untuk pemakaian non-browser, terbitkan token terpisah
+                    tanpa Origin allow-list.
+                </p>
+                @error('editOriginsInput') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <x-nawasara-ui::button type="button" variant="ghost" color="secondary"
+                    wire:click="$set('showEditOrigins', false)">
+                    Batal
+                </x-nawasara-ui::button>
+                <x-nawasara-ui::button type="submit" color="primary">
+                    Simpan Origin Allow-list
                 </x-nawasara-ui::button>
             </div>
         </form>

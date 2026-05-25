@@ -26,12 +26,14 @@ class TokenManager
      * Generate token baru. Return: array{token: ApiToken, plaintext: string}.
      * Plaintext WAJIB ditampilkan ke user SEKARANG — tidak bisa di-retrieve lagi.
      *
-     * `$allowedIps` opsional. Empty array = no allow-list = token boleh
-     * dipakai dari IP mana pun. Setiap entri harus IP/CIDR yang valid;
-     * caller (UI) bertugas validasi sebelum dilempar ke sini.
+     * `$allowedIps` & `$allowedOrigins` opsional. Empty array = no allow-list
+     * = token boleh dipakai dari IP / Origin mana pun. Setiap entri harus
+     * sudah valid; caller (UI) bertugas validasi sebelum dilempar ke sini.
+     * `allowed_origins` di-normalize di sini supaya bentuk simpan kanonik.
      *
      * @param array<int, string> $scopes
      * @param array<int, string> $allowedIps
+     * @param array<int, string> $allowedOrigins
      */
     public function create(
         string $name,
@@ -39,6 +41,7 @@ class TokenManager
         ?Carbon $expiresAt = null,
         ?int $createdBy = null,
         array $allowedIps = [],
+        array $allowedOrigins = [],
     ): array {
         $plaintext = $this->generatePlaintext();
         $hash = $this->hash($plaintext);
@@ -48,6 +51,7 @@ class TokenManager
             'token_hash' => $hash,
             'token_prefix' => substr($plaintext, 0, $this->visiblePrefixLength),
             'allowed_ips' => $allowedIps !== [] ? array_values(array_unique($allowedIps)) : null,
+            'allowed_origins' => self::normalizeOriginList($allowedOrigins),
             'expires_at' => $expiresAt,
             'created_by' => $createdBy,
         ]);
@@ -70,6 +74,48 @@ class TokenManager
         $token->forceFill([
             'allowed_ips' => $allowedIps !== [] ? array_values(array_unique($allowedIps)) : null,
         ])->save();
+    }
+
+    /**
+     * Replace the Origin allow-list. Empty array removes the restriction.
+     * Entries di-normalize ke `scheme://host[:port]` agar bentuk simpan
+     * stabil — itu juga yang dipakai middleware saat compare.
+     *
+     * @param array<int, string> $allowedOrigins
+     */
+    public function updateAllowedOrigins(ApiToken $token, array $allowedOrigins): void
+    {
+        $token->forceFill([
+            'allowed_origins' => self::normalizeOriginList($allowedOrigins),
+        ])->save();
+    }
+
+    /**
+     * Normalize a raw origin list to its canonical, deduplicated form.
+     * Entri yang gagal di-parse (return null dari ApiToken::normalizeOrigin)
+     * di-drop, bukan di-pertahankan apa adanya — kalau caller berhasil
+     * lolos validasi UI tapi entri tetap gagal parse di sini, simpan apa
+     * pun yang gagal-parse cuma akan membuat compare middleware diam-diam
+     * tidak cocok. Better drop early.
+     *
+     * Return null saat list akhirnya kosong, supaya kolom DB konsisten
+     * dengan "no allow-list" alih-alih `[]`.
+     *
+     * @param array<int, string> $list
+     * @return array<int, string>|null
+     */
+    protected static function normalizeOriginList(array $list): ?array
+    {
+        $normalised = [];
+
+        foreach ($list as $entry) {
+            $canon = ApiToken::normalizeOrigin((string) $entry);
+            if ($canon !== null) {
+                $normalised[$canon] = true;
+            }
+        }
+
+        return $normalised === [] ? null : array_keys($normalised);
     }
 
     /**

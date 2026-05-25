@@ -29,6 +29,7 @@ class ApiToken extends Model
         'last_used_at',
         'last_used_ip',
         'allowed_ips',
+        'allowed_origins',
         'expires_at',
         'revoked_at',
         'created_by',
@@ -39,6 +40,7 @@ class ApiToken extends Model
         'expires_at' => 'datetime',
         'revoked_at' => 'datetime',
         'allowed_ips' => 'array',
+        'allowed_origins' => 'array',
     ];
 
     // Hash + plaintext tidak pernah di-serialize. Plaintext memang tidak
@@ -128,6 +130,82 @@ class ApiToken extends Model
         }
 
         return IpUtils::checkIp($ip, $allowed);
+    }
+
+    /**
+     * Apakah `$origin` cocok dengan daftar Origin yang diizinkan?
+     *
+     * Empty allow-list (null / []) = opt-out, terima dari mana saja —
+     * pintu yang sama dengan IP allow-list, menjaga backward compat.
+     *
+     * Saat allow-list terisi, request TANPA Origin di-tolak: browser
+     * yang membuka cross-origin request selalu mengirim Origin, jadi
+     * request tanpa header itu pasti bukan browser di domain target —
+     * dan token ber-Origin-list memang TIDAK dimaksudkan untuk caller
+     * non-browser (curl, server-to-server). Untuk itu, terbitkan token
+     * terpisah tanpa allowed_origins.
+     *
+     * Compare di-normalisasi (lowercase host, strip trailing slash,
+     * drop default port) supaya entri user yang manusiawi tetap cocok
+     * dengan apa yang browser kirim.
+     */
+    public function isOriginAllowed(?string $origin): bool
+    {
+        $allowed = $this->allowed_origins;
+
+        if (! is_array($allowed) || $allowed === []) {
+            return true;
+        }
+
+        $normalized = self::normalizeOrigin((string) $origin);
+        if ($normalized === null) {
+            return false;
+        }
+
+        foreach ($allowed as $entry) {
+            if (self::normalizeOrigin((string) $entry) === $normalized) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalize a value menjadi bentuk kanonik `scheme://host[:port]`.
+     *
+     * Tujuan: entri textarea yang manusiawi (`https://gasta.ponorogo.go.id/`)
+     * cocok dengan header yang browser kirim (`https://gasta.ponorogo.go.id`).
+     *
+     *   - scheme & host di-lowercase
+     *   - default port (80 untuk http, 443 untuk https) dihapus
+     *   - path / query / fragment di-drop
+     *   - trailing slash di-strip
+     *
+     * Return null untuk input yang bukan absolute URL valid.
+     */
+    public static function normalizeOrigin(string $value): ?string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        $parts = parse_url($value);
+        if (! is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return null;
+        }
+
+        $scheme = strtolower($parts['scheme']);
+        $host = strtolower($parts['host']);
+        $port = $parts['port'] ?? null;
+
+        // Drop default ports (80 / 443) supaya `https://x` == `https://x:443`.
+        if (($scheme === 'http' && $port === 80) || ($scheme === 'https' && $port === 443)) {
+            $port = null;
+        }
+
+        return $scheme.'://'.$host.($port !== null ? ':'.$port : '');
     }
 
     /**

@@ -25,6 +25,14 @@ class ApiAccessLog extends Model
      */
     public const KIND_IP_DENIED = 'ip_denied';
 
+    /**
+     * Token valid but the request's Origin header is missing or not in
+     * the token's allow-list. Distinct from ip_denied — points to either
+     * a leaked-token-being-tried-from-elsewhere or a misconfigured SPA
+     * consumer, both of which deserve a separate audit filter.
+     */
+    public const KIND_ORIGIN_DENIED = 'origin_denied';
+
     protected $fillable = [
         'api_token_id',
         'method',

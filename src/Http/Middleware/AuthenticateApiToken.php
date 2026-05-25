@@ -70,6 +70,23 @@ class AuthenticateApiToken
             ], 403);
         }
 
+        // Origin allow-list check (for browser/SPA consumers like Gasta).
+        // Same generic-deny pattern as the IP check above. Tokens without
+        // an allow-list pass through unchanged. Note: a missing Origin
+        // header counts as a deny when the token has an allow-list —
+        // genuine browsers always send it on cross-origin requests, so its
+        // absence implies a non-browser caller, which this token isn't for.
+        if (! $token->isOriginAllowed($request->header('Origin'))) {
+            $this->logFailure($request, 403, $token, ApiAccessLog::KIND_ORIGIN_DENIED);
+
+            return response()->json([
+                'error' => [
+                    'code' => 'forbidden',
+                    'message' => 'Permintaan ditolak.',
+                ],
+            ], 403);
+        }
+
         // Eager-load scopes biar middleware scope berikutnya hemat query.
         $token->loadMissing('scopes');
 

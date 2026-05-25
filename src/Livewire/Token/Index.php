@@ -49,6 +49,13 @@ class Index extends Component
      */
     public string $allowedIpsInput = '';
 
+    /**
+     * Daftar Origin yang diizinkan (browser/SPA). Sama parsing-nya dengan
+     * IP list — satu per baris atau dipisah koma. Kosong = boleh dari
+     * Origin mana pun. Validasi memastikan tiap entri scheme://host valid.
+     */
+    public string $allowedOriginsInput = '';
+
     // -- Plaintext modal — ditampilkan SEKALI setelah generate -----------------
     public bool $showPlaintext = false;
     public string $plaintextToken = '';
@@ -64,6 +71,11 @@ class Index extends Component
     public ?int $editingIpsTokenId = null;
     public string $editIpsInput = '';
 
+    // -- Edit Origin allow-list modal ------------------------------------------
+    public bool $showEditOrigins = false;
+    public ?int $editingOriginsTokenId = null;
+    public string $editOriginsInput = '';
+
     protected function rules(): array
     {
         return [
@@ -72,7 +84,25 @@ class Index extends Component
             'selectedScopes.*' => ['string'],
             'expiresAt' => ['nullable', 'date', 'after:today'],
             'allowedIpsInput' => ['nullable', 'string', $this->ipListRule()],
+            'allowedOriginsInput' => ['nullable', 'string', $this->originListRule()],
         ];
+    }
+
+    /**
+     * Closure rule untuk textarea Origin allow-list. Setiap entri harus
+     * parse jadi scheme://host[:port] valid via ApiToken::normalizeOrigin.
+     * Empty string lolos (= tidak ada whitelist).
+     */
+    protected function originListRule(): \Closure
+    {
+        return function (string $attribute, mixed $value, \Closure $fail): void {
+            foreach ($this->parseIpInput((string) $value) as $entry) {
+                if (ApiToken::normalizeOrigin($entry) === null) {
+                    $fail("Entri \"{$entry}\" bukan URL Origin yang valid (contoh: https://gasta.ponorogo.go.id).");
+                    return;
+                }
+            }
+        };
     }
 
     /**
@@ -230,6 +260,7 @@ class Index extends Component
             expiresAt: $expiresAt,
             createdBy: Auth::id(),
             allowedIps: $this->parseIpInput($validated['allowedIpsInput'] ?? ''),
+            allowedOrigins: $this->parseIpInput($validated['allowedOriginsInput'] ?? ''),
         );
 
         // Tutup create modal → buka plaintext modal.
@@ -369,11 +400,50 @@ class Index extends Component
         };
     }
 
+    // -- Edit Origin allow-list -------------------------------------------------
+
+    public function openEditOrigins(int $id): void
+    {
+        Gate::authorize('api.token.create');
+
+        $token = ApiToken::findOrFail($id);
+
+        $this->editingOriginsTokenId = $token->id;
+        $this->editOriginsInput = is_array($token->allowed_origins) && $token->allowed_origins !== []
+            ? implode("\n", $token->allowed_origins)
+            : '';
+        $this->resetValidation();
+        $this->showEditOrigins = true;
+    }
+
+    public function saveEditOrigins(TokenManager $manager): void
+    {
+        Gate::authorize('api.token.create');
+
+        $this->validate([
+            'editOriginsInput' => ['nullable', 'string', $this->originListRule()],
+        ]);
+
+        $token = ApiToken::findOrFail($this->editingOriginsTokenId);
+        $manager->updateAllowedOrigins($token, $this->parseIpInput($this->editOriginsInput));
+
+        $this->showEditOrigins = false;
+        $this->editingOriginsTokenId = null;
+        $this->editOriginsInput = '';
+        unset($this->tokens);
+
+        $msg = $token->fresh()->allowed_origins
+            ? 'Origin allow-list diperbarui.'
+            : 'Origin allow-list dikosongkan — token boleh dipakai dari Origin mana pun.';
+
+        $this->dispatch('toast', type: 'success', message: $msg);
+    }
+
     // -- Helpers ----------------------------------------------------------------
 
     private function resetGenerateForm(): void
     {
-        $this->reset(['name', 'selectedScopes', 'expiresAt', 'allowedIpsInput']);
+        $this->reset(['name', 'selectedScopes', 'expiresAt', 'allowedIpsInput', 'allowedOriginsInput']);
         $this->resetValidation();
     }
 
