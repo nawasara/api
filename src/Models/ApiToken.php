@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as AuthUser;
+use Symfony\Component\HttpFoundation\IpUtils;
 
 /**
  * Token API yang dipegang aplikasi consumer.
@@ -27,6 +28,7 @@ class ApiToken extends Model
         'token_prefix',
         'last_used_at',
         'last_used_ip',
+        'allowed_ips',
         'expires_at',
         'revoked_at',
         'created_by',
@@ -36,6 +38,7 @@ class ApiToken extends Model
         'last_used_at' => 'datetime',
         'expires_at' => 'datetime',
         'revoked_at' => 'datetime',
+        'allowed_ips' => 'array',
     ];
 
     // Hash + plaintext tidak pernah di-serialize. Plaintext memang tidak
@@ -97,6 +100,34 @@ class ApiToken extends Model
     public function hasScope(string $scope): bool
     {
         return $this->scopes()->where('scope', $scope)->exists();
+    }
+
+    /**
+     * Apakah `$ip` cocok dengan daftar IP yang diizinkan untuk token ini?
+     *
+     * Empty allow-list (null atau []) artinya **opt-out** — token boleh
+     * dipakai dari IP mana pun. Ini disengaja agar token existing tetap
+     * jalan setelah migrasi; admin baru menambah whitelist saat butuh.
+     *
+     * Entri yang didukung: IPv4 tunggal (`1.2.3.4`), IPv6 tunggal
+     * (`2001:db8::1`), dan CIDR (`10.0.0.0/8`, `2001:db8::/32`). Symfony
+     * `IpUtils::checkIp` menangani ketiganya.
+     */
+    public function isIpAllowed(?string $ip): bool
+    {
+        $allowed = $this->allowed_ips;
+
+        if (! is_array($allowed) || $allowed === []) {
+            return true;
+        }
+
+        if (! is_string($ip) || $ip === '') {
+            // Token sudah punya allow-list tapi caller tidak mengaku
+            // punya IP — tolak. Tidak ada use case yang sah untuk ini.
+            return false;
+        }
+
+        return IpUtils::checkIp($ip, $allowed);
     }
 
     /**

@@ -26,13 +26,19 @@ class TokenManager
      * Generate token baru. Return: array{token: ApiToken, plaintext: string}.
      * Plaintext WAJIB ditampilkan ke user SEKARANG — tidak bisa di-retrieve lagi.
      *
+     * `$allowedIps` opsional. Empty array = no allow-list = token boleh
+     * dipakai dari IP mana pun. Setiap entri harus IP/CIDR yang valid;
+     * caller (UI) bertugas validasi sebelum dilempar ke sini.
+     *
      * @param array<int, string> $scopes
+     * @param array<int, string> $allowedIps
      */
     public function create(
         string $name,
         array $scopes = [],
         ?Carbon $expiresAt = null,
         ?int $createdBy = null,
+        array $allowedIps = [],
     ): array {
         $plaintext = $this->generatePlaintext();
         $hash = $this->hash($plaintext);
@@ -41,6 +47,7 @@ class TokenManager
             'name' => $name,
             'token_hash' => $hash,
             'token_prefix' => substr($plaintext, 0, $this->visiblePrefixLength),
+            'allowed_ips' => $allowedIps !== [] ? array_values(array_unique($allowedIps)) : null,
             'expires_at' => $expiresAt,
             'created_by' => $createdBy,
         ]);
@@ -50,6 +57,19 @@ class TokenManager
         }
 
         return ['token' => $token, 'plaintext' => $plaintext];
+    }
+
+    /**
+     * Replace the IP allow-list for an existing token. Pass an empty array
+     * to remove the allow-list (token reverts to "allow any IP").
+     *
+     * @param array<int, string> $allowedIps
+     */
+    public function updateAllowedIps(ApiToken $token, array $allowedIps): void
+    {
+        $token->forceFill([
+            'allowed_ips' => $allowedIps !== [] ? array_values(array_unique($allowedIps)) : null,
+        ])->save();
     }
 
     /**

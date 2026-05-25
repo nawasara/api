@@ -18,6 +18,13 @@ class ApiAccessLog extends Model
     public const KIND_API = 'api';
     public const KIND_STREAM_VERIFY = 'stream_verify';
 
+    /**
+     * Token valid but the caller's IP is not in its allow-list. Separate
+     * kind so admin can filter "show me every IP-blocked attempt" without
+     * grepping through normal 401/403s.
+     */
+    public const KIND_IP_DENIED = 'ip_denied';
+
     protected $fillable = [
         'api_token_id',
         'method',

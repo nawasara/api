@@ -113,6 +113,9 @@
                                     @can('api.token.create')
                                         <x-nawasara-ui::icon-button icon="settings-2" tooltip="Ubah scope"
                                             wire:click="openEditScopes({{ $token->id }})" />
+                                        <x-nawasara-ui::icon-button icon="shield"
+                                            tooltip="{{ $token->allowed_ips ? 'IP allow-list aktif — '.count($token->allowed_ips).' entri' : 'IP allow-list kosong (boleh dari mana saja)' }}"
+                                            wire:click="openEditIps({{ $token->id }})" />
                                     @endcan
                                     @can('api.token.revoke')
                                         @unless ($token->isRevoked())
@@ -159,6 +162,22 @@
                     Kosongkan untuk token tanpa expiry. Token tetap bisa di-revoke kapan saja.
                 </p>
                 @error('expiresAt') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+            </div>
+
+            <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    IP Allow-list (opsional)
+                </label>
+                <textarea wire:model="allowedIpsInput" rows="3"
+                    placeholder="103.10.20.30&#10;103.10.20.0/24&#10;2001:db8::/32"
+                    class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono
+                           focus:border-emerald-500 focus:ring-emerald-500
+                           dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"></textarea>
+                <p class="mt-1 text-xs text-gray-500 dark:text-neutral-400">
+                    Satu entri per baris atau dipisah koma. Dukung IPv4, IPv6, dan CIDR
+                    (mis. <code>10.0.0.0/8</code>). Kosongkan untuk tidak membatasi IP.
+                </p>
+                @error('allowedIpsInput') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
             </div>
 
             <div>
@@ -340,6 +359,38 @@
                 </x-nawasara-ui::button>
                 <x-nawasara-ui::button type="submit" color="primary">
                     Simpan Scope
+                </x-nawasara-ui::button>
+            </div>
+        </form>
+    </x-nawasara-ui::modal>
+
+    {{-- =========================================================== --}}
+    {{-- Edit IP allow-list modal                                     --}}
+    {{-- =========================================================== --}}
+    <x-nawasara-ui::modal wire:model="showEditIps" maxWidth="2xl"
+        title="Edit IP Allow-list"
+        subtitle="Batasi IP/CIDR yang boleh memakai token ini. Kosongkan untuk tidak membatasi.">
+        <form wire:submit="saveEditIps" class="space-y-4">
+            <div>
+                <textarea wire:model="editIpsInput" rows="6"
+                    placeholder="103.10.20.30&#10;103.10.20.0/24&#10;2001:db8::/32"
+                    class="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono
+                           focus:border-emerald-500 focus:ring-emerald-500
+                           dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"></textarea>
+                <p class="mt-1 text-xs text-gray-500 dark:text-neutral-400">
+                    Satu entri per baris atau dipisah koma. Dukung IPv4, IPv6, dan CIDR
+                    (mis. <code>10.0.0.0/8</code>, <code>2001:db8::/32</code>).
+                </p>
+                @error('editIpsInput') <p class="mt-1 text-xs text-rose-600">{{ $message }}</p> @enderror
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <x-nawasara-ui::button type="button" variant="ghost" color="secondary"
+                    wire:click="$set('showEditIps', false)">
+                    Batal
+                </x-nawasara-ui::button>
+                <x-nawasara-ui::button type="submit" color="primary">
+                    Simpan IP Allow-list
                 </x-nawasara-ui::button>
             </div>
         </form>

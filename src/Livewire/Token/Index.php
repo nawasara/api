@@ -12,6 +12,7 @@ use Livewire\WithPagination;
 use Nawasara\Api\Models\ApiToken;
 use Nawasara\Api\Services\TokenManager;
 use Nawasara\Api\Support\ScopeRegistry;
+use Symfony\Component\HttpFoundation\IpUtils;
 
 /**
  * Manajemen API token publik. Listing + generate baru + revoke.
@@ -41,6 +42,13 @@ class Index extends Component
     /** Tanggal expiry (Y-m-d). Kosong = tidak expired. */
     public string $expiresAt = '';
 
+    /**
+     * Daftar IP/CIDR yang diizinkan, sebagai teks bebas (satu per baris
+     * atau dipisah koma). Kosong = tidak ada whitelist = boleh dari IP
+     * mana pun (opt-in feature). Parsing & validasi di parseAllowedIps().
+     */
+    public string $allowedIpsInput = '';
+
     // -- Plaintext modal — ditampilkan SEKALI setelah generate -----------------
     public bool $showPlaintext = false;
     public string $plaintextToken = '';
@@ -51,6 +59,11 @@ class Index extends Component
     public ?int $editingTokenId = null;
     public array $editScopes = [];
 
+    // -- Edit IP allow-list modal ----------------------------------------------
+    public bool $showEditIps = false;
+    public ?int $editingIpsTokenId = null;
+    public string $editIpsInput = '';
+
     protected function rules(): array
     {
         return [
@@ -58,7 +71,71 @@ class Index extends Component
             'selectedScopes' => ['array'],
             'selectedScopes.*' => ['string'],
             'expiresAt' => ['nullable', 'date', 'after:today'],
+            'allowedIpsInput' => ['nullable', 'string', $this->ipListRule()],
         ];
+    }
+
+    /**
+     * Closure rule untuk textarea IP allow-list. Setiap entri (satu per
+     * baris atau dipisah koma) diuji apakah parseable sebagai IPv4, IPv6,
+     * atau CIDR. Empty string lolos (= tidak ada whitelist).
+     */
+    protected function ipListRule(): \Closure
+    {
+        return function (string $attribute, mixed $value, \Closure $fail): void {
+            foreach ($this->parseIpInput((string) $value) as $entry) {
+                if (! $this->isValidIpOrCidr($entry)) {
+                    $fail("Entri \"{$entry}\" bukan IP atau CIDR yang valid.");
+                    return;
+                }
+            }
+        };
+    }
+
+    /**
+     * Pecah teks bebas (textarea) jadi array entri IP/CIDR. Pisahkan per
+     * baris atau koma, trim whitespace, drop empty.
+     *
+     * @return array<int, string>
+     */
+    protected function parseIpInput(string $input): array
+    {
+        if (trim($input) === '') {
+            return [];
+        }
+
+        $parts = preg_split('/[\s,]+/', $input) ?: [];
+
+        return array_values(array_filter(array_map('trim', $parts), fn ($v) => $v !== ''));
+    }
+
+    /**
+     * Cek satu entri benar IPv4/IPv6/CIDR. Strategi: probe dengan
+     * IpUtils::checkIp pakai IP dummy. Kalau parse gagal, IpUtils throw
+     * atau return false untuk syntax invalid; kalau syntax valid tapi
+     * tidak match dummy, itu OK — yang kita uji parser-nya, bukan match.
+     */
+    protected function isValidIpOrCidr(string $entry): bool
+    {
+        // CIDR shape — has '/'
+        if (str_contains($entry, '/')) {
+            [$ip, $mask] = explode('/', $entry, 2);
+
+            if (! filter_var($ip, FILTER_VALIDATE_IP)) {
+                return false;
+            }
+
+            if (! ctype_digit($mask)) {
+                return false;
+            }
+
+            $mask = (int) $mask;
+            $maxMask = filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) ? 32 : 128;
+
+            return $mask >= 0 && $mask <= $maxMask;
+        }
+
+        return (bool) filter_var($entry, FILTER_VALIDATE_IP);
     }
 
     #[Computed]
@@ -152,6 +229,7 @@ class Index extends Component
             scopes: $scopes,
             expiresAt: $expiresAt,
             createdBy: Auth::id(),
+            allowedIps: $this->parseIpInput($validated['allowedIpsInput'] ?? ''),
         );
 
         // Tutup create modal → buka plaintext modal.
@@ -231,11 +309,71 @@ class Index extends Component
         $this->dispatch('toast', type: 'success', message: 'Scope token diperbarui.');
     }
 
+    // -- Edit IP allow-list -----------------------------------------------------
+
+    /**
+     * Buka modal edit IP allow-list untuk token tertentu. Pre-fill textarea
+     * dengan daftar IP yang sekarang tersimpan, dipisah baris.
+     */
+    public function openEditIps(int $id): void
+    {
+        Gate::authorize('api.token.create');
+
+        $token = ApiToken::findOrFail($id);
+
+        $this->editingIpsTokenId = $token->id;
+        $this->editIpsInput = is_array($token->allowed_ips) && $token->allowed_ips !== []
+            ? implode("\n", $token->allowed_ips)
+            : '';
+        $this->resetValidation();
+        $this->showEditIps = true;
+    }
+
+    public function saveEditIps(TokenManager $manager): void
+    {
+        Gate::authorize('api.token.create');
+
+        $this->validate([
+            'editIpsInput' => ['nullable', 'string', $this->ipListRuleFor('editIpsInput')],
+        ]);
+
+        $token = ApiToken::findOrFail($this->editingIpsTokenId);
+        $manager->updateAllowedIps($token, $this->parseIpInput($this->editIpsInput));
+
+        $this->showEditIps = false;
+        $this->editingIpsTokenId = null;
+        $this->editIpsInput = '';
+        unset($this->tokens);
+
+        $msg = $token->fresh()->allowed_ips
+            ? 'IP allow-list diperbarui.'
+            : 'IP allow-list dikosongkan — token boleh dipakai dari IP mana pun.';
+
+        $this->dispatch('toast', type: 'success', message: $msg);
+    }
+
+    /**
+     * Variant ipListRule yang melaporkan error ke attribute spesifik
+     * ($field) — closure rule perlu tahu field-nya supaya pesan tampil
+     * di textarea yang benar.
+     */
+    protected function ipListRuleFor(string $field): \Closure
+    {
+        return function (string $attribute, mixed $value, \Closure $fail): void {
+            foreach ($this->parseIpInput((string) $value) as $entry) {
+                if (! $this->isValidIpOrCidr($entry)) {
+                    $fail("Entri \"{$entry}\" bukan IP atau CIDR yang valid.");
+                    return;
+                }
+            }
+        };
+    }
+
     // -- Helpers ----------------------------------------------------------------
 
     private function resetGenerateForm(): void
     {
-        $this->reset(['name', 'selectedScopes', 'expiresAt']);
+        $this->reset(['name', 'selectedScopes', 'expiresAt', 'allowedIpsInput']);
         $this->resetValidation();
     }
 
