@@ -4,9 +4,10 @@ $prefix = 'nawasara-api';
 
 return [
     [
-        'workspace' => 'settings',
+        'workspace' => 'public-api',
         'label' => 'Public API',
         'icon' => 'lucide-plug-zap',
+        'group' => 'Pengaturan',
         'url' => '',
         'permission' => 'api.token.view',
         'submenu' => [
