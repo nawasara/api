@@ -2,17 +2,21 @@
 
 namespace Nawasara\Api;
 
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Blade;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 use Livewire\Livewire;
 use Nawasara\Api\Console\Commands\PruneAccessLogsCommand;
 use Nawasara\Api\Http\Middleware\AuthenticateApiToken;
+use Nawasara\Api\Http\Middleware\AuthenticateCitizenJwt;
 use Nawasara\Api\Http\Middleware\LogApiAccess;
 use Nawasara\Api\Http\Middleware\RequireScope;
+use Nawasara\Api\Services\CitizenJwtVerifier;
 use Nawasara\Api\Services\StreamUrlSigner;
 use Nawasara\Api\Services\TokenManager;
 use Nawasara\Api\Support\ScopeRegistry;
@@ -42,6 +46,10 @@ class ApiServiceProvider extends ServiceProvider
             ttlSeconds: (int) config('nawasara-api.stream_url.ttl_seconds', 300),
             algorithm: (string) config('nawasara-api.stream_url.algorithm', 'sha256'),
         ));
+
+        // Verifier JWT warga. Singleton supaya cache kunci publik dipakai
+        // bersama seluruh permintaan dalam satu proses.
+        $this->app->singleton(CitizenJwtVerifier::class, fn () => new CitizenJwtVerifier);
     }
 
     public function boot(Router $router): void
@@ -62,6 +70,9 @@ class ApiServiceProvider extends ServiceProvider
         }
 
         $this->registerMiddleware($router);
+        // Limiter didaftarkan SEBELUM route: throttle:nawasara-citizen di
+        // registerMetaRoutes() akan gagal bila namanya belum dikenal.
+        $this->registerCitizenRateLimiter();
         $this->registerMetaRoutes();
         $this->registerLivewire();
         $this->registerSchedule();
@@ -113,6 +124,11 @@ class ApiServiceProvider extends ServiceProvider
         $router->aliasMiddleware('api.auth', AuthenticateApiToken::class);
         $router->aliasMiddleware('scope', RequireScope::class);
         $router->aliasMiddleware('api.log', LogApiAccess::class);
+
+        // Jalur WARGA — JWT Keycloak. Alias TERPISAH, bukan cabang di dalam
+        // api.auth: kekeliruan pada jalur gabungan akan menjatuhkan Gasta dan
+        // integrasi lain sekaligus. Rute lama tidak disentuh sama sekali.
+        $router->aliasMiddleware('api.citizen', AuthenticateCitizenJwt::class);
     }
 
     /**
@@ -126,6 +142,38 @@ class ApiServiceProvider extends ServiceProvider
             ->middleware(['api', 'api.auth', 'api.log'])
             ->name('nawasara-api.')
             ->group(__DIR__.'/../routes/api.php');
+
+        // Endpoint warga — prefix sendiri, middleware sendiri.
+        //
+        // throttle dikunci pada `sub` warga lewat RateLimiter bernama
+        // 'nawasara-citizen' (lihat registerCitizenRateLimiter). Tanpa itu
+        // Laravel membatasi per-IP, dan puluhan ribu warga di belakang NAT
+        // operator seluler akan saling menghabiskan jatah satu sama lain.
+        Route::prefix(config('nawasara-api.route.prefix', 'api/v1').'/citizen')
+            ->middleware(['api', 'api.citizen', 'throttle:nawasara-citizen'])
+            ->name('nawasara-api.citizen.')
+            ->group(__DIR__.'/../routes/citizen.php');
+    }
+
+    /**
+     * Rate limit per WARGA, bukan per IP.
+     *
+     * Pembatasan bawaan Laravel memakai IP. Untuk aplikasi ponsel itu keliru:
+     * warga di belakang NAT operator seluler berbagi satu IP publik, sehingga
+     * beberapa pengguna aktif dapat menghabiskan jatah seluruh pelanggan
+     * operator yang sama di wilayah itu.
+     *
+     * Dikunci pada `sub` — penanda warga yang stabil. Bila `sub` belum ada
+     * (permintaan belum terautentikasi), jatuh ke IP sebagai jaring pengaman.
+     */
+    protected function registerCitizenRateLimiter(): void
+    {
+        RateLimiter::for('nawasara-citizen', function ($request) {
+            $perMinute = (int) config('nawasara-api.citizen.rate_limit_per_minute', 60);
+            $key = $request->attributes->get('citizen_sub') ?: $request->ip();
+
+            return Limit::perMinute($perMinute)->by('citizen:'.$key);
+        });
     }
 
     protected function registerSchedule(): void

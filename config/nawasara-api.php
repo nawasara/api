@@ -56,6 +56,44 @@ return [
     'log_retention_days' => env('NAWASARA_API_LOG_RETENTION_DAYS', 90),
 
     // -------------------------------------------------------------------------
+    // Autentikasi WARGA — JWT Keycloak
+    // -------------------------------------------------------------------------
+    // Jalur KEDUA, berdampingan dengan token `nws_`. Dipakai aplikasi ponsel
+    // (puluhan ribu warga) yang tidak bisa memakai token statis: IP-nya
+    // berpindah, tidak mengirim Origin, dan APK-nya dapat dibongkar.
+    //
+    // Verifikasi dilakukan LOKAL memakai kunci publik Keycloak — Keycloak
+    // tidak berada di jalur request, sehingga ia lambat atau restart tidak
+    // ikut menjatuhkan API.
+    'citizen' => [
+        // Harus sama persis dengan realm yang menerbitkan token. Claim `iss`
+        // dicocokkan dengan "<base_url>/realms/<realm>"; realm lain di server
+        // Keycloak yang sama akan DITOLAK meski tanda tangannya sah.
+        'base_url' => env('NAWASARA_CITIZEN_KC_URL', 'https://kisara.ponorogo.go.id'),
+        'realm' => env('NAWASARA_CITIZEN_KC_REALM', 'ponorogo-citizen'),
+
+        // Client yang tokennya diterima. Kosongkan untuk menerima semua client
+        // dalam realm — issuer sudah menyempitkan asalnya ke satu realm.
+        // Diperiksa terhadap `azp` MAUPUN `aud`: Keycloak sering menaruh nama
+        // client di `azp` dan "account" di `aud`, sehingga memeriksa `aud`
+        // saja akan menolak token yang sebenarnya sah.
+        'allowed_clients' => array_filter(explode(',', (string) env(
+            'NAWASARA_CITIZEN_KC_CLIENTS',
+            'pramana-mobile'
+        ))),
+
+        // TTL cache kunci publik (detik). Panjang karena kunci Keycloak jarang
+        // berganti; saat rotasi terjadi, kegagalan pencocokan kunci memicu satu
+        // kali segar-ulang otomatis (lihat CitizenJwtVerifier).
+        'jwks_ttl' => (int) env('NAWASARA_CITIZEN_JWKS_TTL', 3600),
+
+        // Batas permintaan per warga per menit, dikunci pada `sub`.
+        // ⚠️ Ini batas TRANSPORT, bukan aturan bisnis. "Maksimal 5 laporan per
+        // hari" ditegakkan di nawasara/aspirations, bukan di sini.
+        'rate_limit_per_minute' => (int) env('NAWASARA_CITIZEN_RATE_PER_MINUTE', 60),
+    ],
+
+    // -------------------------------------------------------------------------
     // Route configuration
     // -------------------------------------------------------------------------
     'route' => [
