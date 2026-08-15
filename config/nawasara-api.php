@@ -65,6 +65,29 @@ return [
     // Verifikasi dilakukan LOKAL memakai kunci publik Keycloak — Keycloak
     // tidak berada di jalur request, sehingga ia lambat atau restart tidak
     // ikut menjatuhkan API.
+    'staff' => [
+        // Realm PEGAWAI — berbeda dari realm warga. Panel admin (Next.js)
+        // memakai jalur ini; aplikasi warga memakai 'citizen' di atas.
+        //
+        // Keduanya sengaja dipisah: kunci penanda tangan, daftar client, dan
+        // umur token realm pegawai tidak sama dengan realm warga. Token warga
+        // yang dikirim ke endpoint staf akan gagal pada pemeriksaan issuer —
+        // dan memang itu yang diinginkan.
+        'base_url' => env('NAWASARA_STAFF_KC_URL', 'https://kisara.ponorogo.go.id'),
+        'realm' => env('NAWASARA_STAFF_KC_REALM', 'asn-productions'),
+
+        // Client panel. Dikosongkan = menerima semua client dalam realm
+        // pegawai — TIDAK disarankan di sini: realm pegawai dipakai banyak
+        // aplikasi lain, dan tanpa daftar ini token dari aplikasi mana pun
+        // akan diterima sebagai token panel.
+        'allowed_clients' => array_filter(explode(',', (string) env(
+            'NAWASARA_STAFF_KC_CLIENTS',
+            ''
+        ))),
+
+        'jwks_ttl' => (int) env('NAWASARA_STAFF_JWKS_TTL', 3600),
+    ],
+
     'citizen' => [
         // Harus sama persis dengan realm yang menerbitkan token. Claim `iss`
         // dicocokkan dengan "<base_url>/realms/<realm>"; realm lain di server

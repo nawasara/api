@@ -31,6 +31,19 @@ class CitizenJwtVerifier
     protected const LEEWAY = 30;
 
     /**
+     * Cabang config yang dibaca kelas ini.
+     *
+     * Dijadikan properti, bukan string keras, supaya realm lain (staf ASN)
+     * dapat memakai ULANG seluruh logika verifikasi di bawah hanya dengan
+     * menimpa dua properti ini. Menyalin kelasnya akan berarti dua salinan
+     * pemeriksaan keamanan yang harus diperbaiki dua kali setiap ada temuan.
+     */
+    protected string $configKey = 'citizen';
+
+    /** Kunci cache JWKS — WAJIB berbeda per realm, kuncinya tidak sama. */
+    protected string $jwksCacheKey = 'nawasara-api:citizen-jwks';
+
+    /**
      * Verifikasi token; kembalikan claim bila sah, null bila tidak.
      *
      * Sengaja TIDAK melempar exception ke pemanggil: middleware perlu menjawab
@@ -162,7 +175,7 @@ class CitizenJwtVerifier
      */
     protected function audienceAllowed(array $claims): bool
     {
-        $allowed = array_filter((array) config('nawasara-api.citizen.allowed_clients', []));
+        $allowed = array_filter((array) config("nawasara-api.{$this->configKey}.allowed_clients", []));
 
         if ($allowed === []) {
             return true;
@@ -181,8 +194,8 @@ class CitizenJwtVerifier
     /** Issuer yang diharapkan — harus persis sama dengan claim `iss`. */
     public function issuer(): string
     {
-        $base = rtrim((string) config('nawasara-api.citizen.base_url', ''), '/');
-        $realm = trim((string) config('nawasara-api.citizen.realm', ''), '/');
+        $base = rtrim((string) config("nawasara-api.{$this->configKey}.base_url", ''), '/');
+        $realm = trim((string) config("nawasara-api.{$this->configKey}.realm", ''), '/');
 
         if ($base === '' || $realm === '') {
             return '';
@@ -211,10 +224,10 @@ class CitizenJwtVerifier
      */
     protected function publicKeys(): array
     {
-        $ttl = (int) config('nawasara-api.citizen.jwks_ttl', 3600);
+        $ttl = (int) config("nawasara-api.{$this->configKey}.jwks_ttl", 3600);
 
         $jwks = Cache::remember(
-            'nawasara-api:citizen-jwks',
+            $this->jwksCacheKey,
             $ttl,
             fn () => $this->fetchJwks(),
         );
@@ -279,6 +292,6 @@ class CitizenJwtVerifier
      */
     public function forgetKeys(): void
     {
-        Cache::forget('nawasara-api:citizen-jwks');
+        Cache::forget($this->jwksCacheKey);
     }
 }

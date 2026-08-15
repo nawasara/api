@@ -14,6 +14,7 @@ use Livewire\Livewire;
 use Nawasara\Api\Console\Commands\PruneAccessLogsCommand;
 use Nawasara\Api\Http\Middleware\AuthenticateApiToken;
 use Nawasara\Api\Http\Middleware\AuthenticateCitizenJwt;
+use Nawasara\Api\Http\Middleware\AuthenticateStaffJwt;
 use Nawasara\Api\Http\Middleware\LogApiAccess;
 use Nawasara\Api\Http\Middleware\RequireScope;
 use Nawasara\Api\Services\CitizenJwtVerifier;
@@ -118,6 +119,8 @@ class ApiServiceProvider extends ServiceProvider
      *   - api.auth  → autentikasi token (Bearer/X-API-Key)
      *   - scope     → cek required scope per route
      *   - api.log   → log akses ke api_access_logs
+     *   - api.citizen → JWT realm warga
+     *   - api.staff   → JWT realm pegawai (panel Next.js)
      */
     protected function registerMiddleware(Router $router): void
     {
@@ -129,6 +132,15 @@ class ApiServiceProvider extends ServiceProvider
         // api.auth: kekeliruan pada jalur gabungan akan menjatuhkan Gasta dan
         // integrasi lain sekaligus. Rute lama tidak disentuh sama sekali.
         $router->aliasMiddleware('api.citizen', AuthenticateCitizenJwt::class);
+
+        // Jalur STAF — JWT realm pegawai, untuk panel admin Next.js. Alias
+        // ketiga dengan alasan yang sama: tiga jenis pemanggil dengan sifat
+        // berbeda, dipisah agar kesalahan pada satu jalur tidak merembet.
+        //
+        // Beda pentingnya dari api.citizen: middleware ini juga MEMETAKAN
+        // token ke baris `users` dan menyalakan Auth::setUser(), sehingga
+        // permission Spatie dan ScopedToOpd bekerja seperti di panel Livewire.
+        $router->aliasMiddleware('api.staff', AuthenticateStaffJwt::class);
     }
 
     /**
