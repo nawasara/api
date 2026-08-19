@@ -129,6 +129,10 @@ class ApiServiceProvider extends ServiceProvider
         // api.auth: kekeliruan pada jalur gabungan akan menjatuhkan Gasta dan
         // integrasi lain sekaligus. Rute lama tidak disentuh sama sekali.
         $router->aliasMiddleware('api.citizen', AuthenticateCitizenJwt::class);
+        // Staff JWT alias: some packages expect `api.staff`. For now reuse
+        // the citizen verifier implementation so routes resolve. A dedicated
+        // staff verifier can be added later if semantics diverge.
+        $router->aliasMiddleware('api.staff', AuthenticateCitizenJwt::class);
     }
 
     /**
