@@ -132,7 +132,6 @@ class ApiServiceProvider extends ServiceProvider
         // api.auth: kekeliruan pada jalur gabungan akan menjatuhkan Gasta dan
         // integrasi lain sekaligus. Rute lama tidak disentuh sama sekali.
         $router->aliasMiddleware('api.citizen', AuthenticateCitizenJwt::class);
-
         // Jalur STAF — JWT realm pegawai, untuk panel admin Next.js. Alias
         // ketiga dengan alasan yang sama: tiga jenis pemanggil dengan sifat
         // berbeda, dipisah agar kesalahan pada satu jalur tidak merembet.
@@ -140,6 +139,18 @@ class ApiServiceProvider extends ServiceProvider
         // Beda pentingnya dari api.citizen: middleware ini juga MEMETAKAN
         // token ke baris `users` dan menyalakan Auth::setUser(), sehingga
         // permission Spatie dan ScopedToOpd bekerja seperti di panel Livewire.
+        //
+        // ⚠️ JANGAN mengarahkan alias ini ke AuthenticateCitizenJwt, meski itu
+        // membuat rute berhenti melempar 500. Dua hal rusak sekaligus:
+        //
+        //   1. Yang diverifikasi menjadi realm WARGA (`ponorogo-citizen`),
+        //      bukan realm pegawai — token warga mana pun diterima di endpoint
+        //      OPD.
+        //   2. Auth::setUser() tidak pernah dipanggil, sehingga `can()` di
+        //      StaffReportController selalu false dan endpointnya tetap gagal,
+        //      hanya dengan cara yang berbeda.
+        //
+        // Pernah diusulkan sebagai penambal cepat 19 Agustus 2026.
         $router->aliasMiddleware('api.staff', AuthenticateStaffJwt::class);
     }
 
