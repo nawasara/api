@@ -1,47 +1,43 @@
 # nawasara/api
 
-Public REST API plumbing untuk framework Nawasara.
+Public REST API plumbing for the Nawasara framework.
 
-Package ini menyediakan **infrastruktur**: token + scope + signed URL +
-audit log. Domain package (cctv, wifi, …) menyediakan **endpoint mereka
-sendiri** (route, controller, transformer) — package ini tidak tahu apa
-itu Camera atau WifiPoint.
+This package provides the **infrastructure**: tokens, scopes, signed URLs, and an audit log. Domain packages (cctv, wifi, and so on) provide **their own endpoints** (routes, controllers, transformers). This package knows nothing about what a Camera or a WifiPoint is.
 
-## Yang ada di sini
+## What lives here
 
-- `ApiToken` + `ApiTokenScope` + `ApiAccessLog` (model + migration)
-- `TokenManager` — generate, verify (by plaintext → hash lookup), revoke
-- `StreamUrlSigner` — HMAC-signed URL untuk endpoint stream proxy (Nginx
-  `auth_request`)
-- `ScopeRegistry` — registry in-code untuk scope yang available
+- `ApiToken`, `ApiTokenScope`, and `ApiAccessLog` (models plus migrations)
+- `TokenManager`: generate, verify (plaintext to hash lookup), revoke
+- `StreamUrlSigner`: HMAC-signed URLs for the stream proxy endpoint (Nginx `auth_request`)
+- `ScopeRegistry`: an in-code registry of the available scopes
 - Middleware: `api.auth`, `scope:<name>`, `api.log`
-- Endpoint meta: `/api/v1/me`, `/api/v1/scopes`
-- Command `nawasara-api:prune-logs` (scheduled harian)
+- Meta endpoints: `/api/v1/me`, `/api/v1/scopes`
+- The `nawasara-api:prune-logs` command (scheduled daily)
 
-## Pemakaian — domain package
+## Usage from a domain package
 
-Di service provider package domain (mis. `CctvServiceProvider`):
+In the domain package's service provider (for example `CctvServiceProvider`):
 
 ```php
 use Nawasara\Api\Facades\Api;
 
 public function boot(): void
 {
-    // Register scope kalau package nawasara/api terpasang. Kalau tidak,
-    // skip — domain package tetap jalan tanpa API public.
+    // Register the scope only if nawasara/api is installed. If it is not,
+    // skip it; the domain package still works without a public API.
     if (class_exists(Api::class)) {
         Api::registerScope('cctv.camera.read', 'List + detail kamera publik.');
         Api::registerScope('cctv.camera.stream', 'Generate signed stream URL.');
     }
 
-    // Load route api.php domain (mount di prefix /api/v1/cctv).
+    // Load the domain's api.php routes (mounted at prefix /api/v1/cctv).
     Route::prefix('api/v1/cctv')
         ->middleware(['api', 'api.auth', 'api.log'])
         ->group(__DIR__.'/../routes/api.php');
 }
 ```
 
-Di `routes/api.php` domain package:
+In the domain package's `routes/api.php`:
 
 ```php
 Route::get('/cameras', [CameraController::class, 'index'])
@@ -53,18 +49,13 @@ Route::get('/cameras/{slug}/stream', [CameraController::class, 'stream'])
 
 ## Token format
 
-Plaintext: `nws_<40 random url-safe chars>` (44 char total, mirip GitHub
-PAT). Prefix `nws_` membantu secret scanner GitHub detect kalau bocor ke
-commit.
+Plaintext: `nws_<40 random url-safe chars>` (44 characters total, similar to a GitHub PAT). The `nws_` prefix helps GitHub's secret scanner detect a token if it leaks into a commit.
 
-Disimpan di DB: **hash SHA-256** dari plaintext (kolom `token_hash`),
-plus 8 char pertama plaintext (kolom `token_prefix`) untuk identifikasi
-visual di list UI. Plaintext **TIDAK** pernah disimpan — ditampilkan
-sekali saat generate, hilang setelahnya.
+Stored in the database: the **SHA-256 hash** of the plaintext (column `token_hash`), plus the first 8 characters of the plaintext (column `token_prefix`) for visual identification in the list UI. The plaintext is **never** stored. It is shown once when generated and gone afterwards.
 
 ## Stream URL signing
 
-Workflow proxy mode CCTV:
+The CCTV proxy-mode workflow:
 
 ```
 Client → GET /api/v1/cctv/cameras/cam-01/stream
@@ -91,4 +82,4 @@ Nginx proxy_pass → http://go2rtc:1984/api/ws?src=cam-01
                    (kalau auth_request 200)
 ```
 
-Implementation detail di package domain (`nawasara/cctv` M3).
+The implementation lives in the domain package (`nawasara/cctv` M3).
