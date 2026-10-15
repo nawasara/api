@@ -50,6 +50,28 @@ return [
     ],
 
     // -------------------------------------------------------------------------
+    // Rem per IP SEBELUM autentikasi (ketiga jalur: nws_, warga, staf)
+    // -------------------------------------------------------------------------
+    // Audit keamanan 15 Oktober 2026, temuan S14: tanpa rem ini token palsu
+    // yang dikirim terus-menerus tidak tertahan apa pun, dan setiap 401
+    // menulis satu baris api_access_logs. Lihat Support\AuthAbuseGuard.
+    // Nilai 0 mematikan rem yang bersangkutan.
+    'pre_auth' => [
+        // Semua permintaan per IP per menit. LONGGAR dengan sengaja: ribuan
+        // ponsel warga berbagi IP operator seluler (CGNAT).
+        'per_ip_per_minute' => (int) env('NAWASARA_API_PREAUTH_PER_MINUTE', 600),
+
+        // Penolakan 401 per IP per menit. Lewat dari ini, IP tersebut dijawab
+        // 429 tanpa tokennya diperiksa sampai menitnya habis. Aplikasi yang
+        // sah hampir tidak pernah ditolak, jadi angka ini aman jauh lebih kecil.
+        'failures_per_ip_per_minute' => (int) env('NAWASARA_API_PREAUTH_FAILURES_PER_MINUTE', 60),
+
+        // Berapa penolakan per IP per menit yang ditulis ke api_access_logs.
+        // Sisanya tidak dicatat; 0 = tidak mencatat penolakan sama sekali.
+        'denial_logs_per_ip_per_minute' => (int) env('NAWASARA_API_DENIAL_LOGS_PER_MINUTE', 10),
+    ],
+
+    // -------------------------------------------------------------------------
     // Audit log retention
     // -------------------------------------------------------------------------
     // Scheduled job prune row api_access_logs lebih tua dari ini (hari).
@@ -78,12 +100,22 @@ return [
 
         // Client panel. Dikosongkan = menerima semua client dalam realm
         // pegawai — TIDAK disarankan di sini: realm pegawai dipakai banyak
-        // aplikasi lain, dan tanpa daftar ini token dari aplikasi mana pun
-        // akan diterima sebagai token panel.
+        // aplikasi lain (13 per Oktober 2026), dan tanpa daftar ini token dari
+        // aplikasi mana pun akan diterima sebagai token panel.
+        //
+        // Audit keamanan 15 Oktober 2026, temuan S12. Daftar kosong TIDAK
+        // dijadikan penolakan bawaan, karena produksi yang belum mengisi env
+        // ini akan langsung menolak seluruh panel. Sebagai gantinya verifier
+        // menulis peringatan sekali per proses, dan `enforce_allowed_clients`
+        // tersedia untuk menolak bila daftarnya kosong.
         'allowed_clients' => array_filter(explode(',', (string) env(
             'NAWASARA_STAFF_KC_CLIENTS',
             ''
         ))),
+
+        // true = daftar client KOSONG berarti tolak semua token (fail-closed).
+        // Nyalakan setelah NAWASARA_STAFF_KC_CLIENTS terisi dan terbukti benar.
+        'enforce_allowed_clients' => (bool) env('NAWASARA_STAFF_KC_ENFORCE_CLIENTS', false),
 
         'jwks_ttl' => (int) env('NAWASARA_STAFF_JWKS_TTL', 3600),
     ],
@@ -104,6 +136,10 @@ return [
             'NAWASARA_CITIZEN_KC_CLIENTS',
             'pramana-mobile'
         ))),
+
+        // Lihat catatan yang sama di cabang 'staff'. Daftar warga sudah terisi
+        // secara bawaan, jadi ini hanya berpengaruh bila env-nya dikosongkan.
+        'enforce_allowed_clients' => (bool) env('NAWASARA_CITIZEN_KC_ENFORCE_CLIENTS', false),
 
         // TTL cache kunci publik (detik). Panjang karena kunci Keycloak jarang
         // berganti; saat rotasi terjadi, kegagalan pencocokan kunci memicu satu

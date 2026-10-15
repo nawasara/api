@@ -7,9 +7,12 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Url;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 use Livewire\WithPagination;
 use Nawasara\Api\Models\ApiToken;
+use Nawasara\AuthPrimitives\Attributes\RequiresSudo;
+use Nawasara\AuthPrimitives\Traits\WithSudo;
 use Nawasara\Api\Services\TokenManager;
 use Nawasara\Api\Support\ScopeRegistry;
 use Symfony\Component\HttpFoundation\IpUtils;
@@ -19,10 +22,25 @@ use Symfony\Component\HttpFoundation\IpUtils;
  *
  * Plaintext token ditampilkan SEKALI di modal setelah generate — setelah
  * modal ditutup, token tidak bisa di-recover (cuma hash di DB).
+ *
+ * Audit keamanan 15 Oktober 2026 (S6):
+ *  - Membuat token, mengubah scope, dan revoke kini wajib sudo.
+ *  - Scope adalah hak akses data lintas paket, tetapi tidak ada pemetaan
+ *    scope ke permission Spatie (scope `cctv.camera.read` tidak berpadanan
+ *    dengan permission mana pun). Karena itu MEMBERIKAN scope (buat token
+ *    atau ubah scope) dibatasi ke permission tersendiri `api.token.grant`,
+ *    di atas `api.token.create`. Pemegang `api.token.grant` dianggap berhak
+ *    atas SEMUA scope terdaftar, jadi berikan hanya ke admin tertinggi.
+ *    Ubah IP/Origin allow-list cukup `api.token.create` karena hanya
+ *    mempersempit pemakaian token, tidak menambah hak.
  */
 class Index extends Component
 {
     use WithPagination;
+    use WithSudo;
+
+    /** Permission untuk memberikan scope ke token (lihat docblock kelas). */
+    public const GRANT_PERMISSION = 'api.token.grant';
 
     #[Url(except: '')]
     public string $search = '';
@@ -58,21 +76,29 @@ class Index extends Component
 
     // -- Plaintext modal — ditampilkan SEKALI setelah generate -----------------
     public bool $showPlaintext = false;
+    // #[Locked]: diisi server, tidak pernah ditulis browser. Audit keamanan
+    // 15 Oktober 2026: properti publik yang tidak dikunci dapat diubah lewat
+    // payload Livewire, lalu aksi berikutnya bekerja pada id yang dipalsukan.
+    #[Locked]
     public string $plaintextToken = '';
+    #[Locked]
     public string $plaintextTokenName = '';
 
     // -- Edit scope modal ------------------------------------------------------
     public bool $showEditScopes = false;
+    #[Locked]
     public ?int $editingTokenId = null;
     public array $editScopes = [];
 
     // -- Edit IP allow-list modal ----------------------------------------------
     public bool $showEditIps = false;
+    #[Locked]
     public ?int $editingIpsTokenId = null;
     public string $editIpsInput = '';
 
     // -- Edit Origin allow-list modal ------------------------------------------
     public bool $showEditOrigins = false;
+    #[Locked]
     public ?int $editingOriginsTokenId = null;
     public string $editOriginsInput = '';
 
@@ -229,16 +255,22 @@ class Index extends Component
 
     // -- Generate ---------------------------------------------------------------
 
+    // Sudo diminta sejak membuka form supaya isian tidak hilang karena
+    // pengalihan step-up saat menekan Simpan.
+    #[RequiresSudo(reason: 'membuat token API')]
     public function openCreate(): void
     {
         Gate::authorize('api.token.create');
+        Gate::authorize(self::GRANT_PERMISSION);
         $this->resetGenerateForm();
         $this->showCreate = true;
     }
 
+    #[RequiresSudo(reason: 'membuat token API')]
     public function create(TokenManager $manager): void
     {
         Gate::authorize('api.token.create');
+        Gate::authorize(self::GRANT_PERMISSION);
 
         $validated = $this->validate();
 
@@ -275,6 +307,18 @@ class Index extends Component
         $this->dispatch('toast', type: 'success', message: 'Token API berhasil dibuat. Salin sekarang — tidak akan ditampilkan lagi.');
     }
 
+    /**
+     * Modal plaintext juga bisa ditutup lewat backdrop/Esc (wire:model), yang
+     * tidak memanggil closePlaintext(). Tanpa ini token mentah tetap tinggal
+     * di snapshot Livewire dan HTML halaman sampai komponen dimuat ulang.
+     */
+    public function updatedShowPlaintext(bool $value): void
+    {
+        if (! $value) {
+            $this->closePlaintext();
+        }
+    }
+
     public function closePlaintext(): void
     {
         $this->showPlaintext = false;
@@ -284,6 +328,7 @@ class Index extends Component
 
     // -- Revoke -----------------------------------------------------------------
 
+    #[RequiresSudo(reason: 'mencabut token API')]
     public function revoke(int $id, TokenManager $manager): void
     {
         Gate::authorize('api.token.revoke');
@@ -297,9 +342,11 @@ class Index extends Component
 
     // -- Edit scopes ------------------------------------------------------------
 
+    #[RequiresSudo(reason: 'mengubah scope token API')]
     public function openEditScopes(int $id): void
     {
         Gate::authorize('api.token.create');
+        Gate::authorize(self::GRANT_PERMISSION);
 
         $token = ApiToken::with('scopes')->findOrFail($id);
 
@@ -308,9 +355,11 @@ class Index extends Component
         $this->showEditScopes = true;
     }
 
+    #[RequiresSudo(reason: 'mengubah scope token API')]
     public function saveEditScopes(): void
     {
         Gate::authorize('api.token.create');
+        Gate::authorize(self::GRANT_PERMISSION);
 
         $token = ApiToken::with('scopes')->findOrFail($this->editingTokenId);
 

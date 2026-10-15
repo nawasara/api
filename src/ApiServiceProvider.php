@@ -20,6 +20,7 @@ use Nawasara\Api\Http\Middleware\RequireScope;
 use Nawasara\Api\Services\CitizenJwtVerifier;
 use Nawasara\Api\Services\StreamUrlSigner;
 use Nawasara\Api\Services\TokenManager;
+use Nawasara\Api\Support\AuthAbuseGuard;
 use Nawasara\Api\Support\ScopeRegistry;
 use Symfony\Component\Finder\Finder;
 
@@ -51,6 +52,16 @@ class ApiServiceProvider extends ServiceProvider
         // Verifier JWT warga. Singleton supaya cache kunci publik dipakai
         // bersama seluruh permintaan dalam satu proses.
         $this->app->singleton(CitizenJwtVerifier::class, fn () => new CitizenJwtVerifier);
+
+        // Rem per IP sebelum autentikasi (audit keamanan 15 Oktober 2026,
+        // temuan S14). Singleton supaya ketiga middleware autentikasi memakai
+        // batas yang sama; hitungannya sendiri ada di cache, bukan di objek.
+        $this->app->singleton(AuthAbuseGuard::class, fn ($app) => new AuthAbuseGuard(
+            limiter: $app->make(\Illuminate\Cache\RateLimiter::class),
+            perIpPerMinute: (int) config('nawasara-api.pre_auth.per_ip_per_minute', 600),
+            failuresPerIpPerMinute: (int) config('nawasara-api.pre_auth.failures_per_ip_per_minute', 60),
+            denialLogsPerIpPerMinute: (int) config('nawasara-api.pre_auth.denial_logs_per_ip_per_minute', 10),
+        ));
     }
 
     public function boot(Router $router): void
@@ -167,6 +178,12 @@ class ApiServiceProvider extends ServiceProvider
             ->group(__DIR__.'/../routes/api.php');
 
         // Endpoint warga — prefix sendiri, middleware sendiri.
+        //
+        // ⚠️ `throttle:nawasara-citizen` berjalan SESUDAH `api.citizen`, jadi
+        // permintaan bertoken palsu tidak pernah sampai kepadanya. Rem untuk
+        // itu ada di dalam middleware autentikasinya sendiri (AuthAbuseGuard,
+        // per IP, audit keamanan 15 Oktober 2026 temuan S14), sehingga berlaku
+        // juga bagi grup `api.auth` dan `api.staff` milik paket lain.
         //
         // throttle dikunci pada `sub` warga lewat RateLimiter bernama
         // 'nawasara-citizen' (lihat registerCitizenRateLimiter). Tanpa itu

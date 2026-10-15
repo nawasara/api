@@ -5,6 +5,7 @@ namespace Nawasara\Api\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Nawasara\Api\Http\Middleware\Concerns\GuardsAuthAbuse;
 use Nawasara\Api\Models\ApiAccessLog;
 use Nawasara\Api\Services\StaffJwtVerifier;
 use Symfony\Component\HttpFoundation\Response;
@@ -43,12 +44,20 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class AuthenticateStaffJwt
 {
+    use GuardsAuthAbuse;
+
     public function __construct(
         protected StaffJwtVerifier $verifier,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
+        // Rem per IP SEBELUM token diperiksa (audit keamanan 15 Oktober 2026,
+        // temuan S14). Lihat AuthAbuseGuard.
+        if ($throttled = $this->throttleBeforeAuth($request)) {
+            return $throttled;
+        }
+
         $token = $this->extractToken($request);
 
         if ($token === null) {
@@ -135,19 +144,24 @@ class AuthenticateStaffJwt
     /** Tolak + catat, dengan pola yang sama seperti jalur warga. */
     protected function deny(Request $request, string $code, string $message, int $status = 401): Response
     {
-        try {
-            ApiAccessLog::create([
-                'api_token_id' => null,
-                'method' => $request->method(),
-                'path' => substr($request->path(), 0, 512),
-                'status' => $status,
-                'kind' => ApiAccessLog::KIND_API,
-                'ip' => $request->ip(),
-                'user_agent' => substr((string) $request->userAgent(), 0, 512),
-            ]);
-        } catch (\Throwable) {
-            // Gagal mencatat tidak boleh menjatuhkan permintaan — penolakannya
-            // lebih penting daripada catatannya.
+        // Dicatat dengan batas per IP (audit keamanan 15 Oktober 2026, temuan
+        // S14). Sebelumnya setiap penolakan menjadi satu INSERT, sehingga token
+        // palsu yang dikirim terus-menerus dapat membanjiri `api_access_logs`.
+        if ($this->shouldRecordDenial($request, $status)) {
+            try {
+                ApiAccessLog::create([
+                    'api_token_id' => null,
+                    'method' => $request->method(),
+                    'path' => substr($request->path(), 0, 512),
+                    'status' => $status,
+                    'kind' => ApiAccessLog::KIND_API,
+                    'ip' => $request->ip(),
+                    'user_agent' => substr((string) $request->userAgent(), 0, 512),
+                ]);
+            } catch (\Throwable) {
+                // Gagal mencatat tidak boleh menjatuhkan permintaan — penolakannya
+                // lebih penting daripada catatannya.
+            }
         }
 
         return response()->json([

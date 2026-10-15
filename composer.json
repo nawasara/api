@@ -35,7 +35,8 @@
         "spatie/laravel-activitylog": "^4.0",
         "firebase/php-jwt": "^6.0|^7.0",
         "nawasara/ui": "*",
-        "livewire/livewire": "^3.0"
+        "livewire/livewire": "^3.0",
+        "nawasara/auth-primitives": "*"
     },
     "extra": {
         "laravel": {

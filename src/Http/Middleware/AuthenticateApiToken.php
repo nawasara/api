@@ -4,6 +4,7 @@ namespace Nawasara\Api\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Nawasara\Api\Http\Middleware\Concerns\GuardsAuthAbuse;
 use Nawasara\Api\Models\ApiAccessLog;
 use Nawasara\Api\Services\TokenManager;
 use Symfony\Component\HttpFoundation\Response;
@@ -22,12 +23,20 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class AuthenticateApiToken
 {
+    use GuardsAuthAbuse;
+
     public function __construct(
         protected TokenManager $tokens,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
+        // Rem per IP SEBELUM token diperiksa (audit keamanan 15 Oktober 2026,
+        // temuan S14). Lihat AuthAbuseGuard.
+        if ($throttled = $this->throttleBeforeAuth($request)) {
+            return $throttled;
+        }
+
         $plaintext = $this->extractToken($request);
 
         if ($plaintext === null) {
@@ -134,6 +143,13 @@ class AuthenticateApiToken
         ?\Nawasara\Api\Models\ApiToken $token = null,
         ?string $kind = null,
     ): void {
+        // Penolakan dicatat dengan batas per IP (audit keamanan 15 Oktober
+        // 2026, temuan S14): sebelumnya setiap 401 menjadi satu INSERT, dan
+        // token palsu yang dikirim terus-menerus membanjiri tabel ini.
+        if (! $this->shouldRecordDenial($request, $status)) {
+            return;
+        }
+
         // Best-effort — jangan crash request hanya karena log gagal.
         try {
             ApiAccessLog::create([

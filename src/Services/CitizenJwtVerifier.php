@@ -94,6 +94,20 @@ class CitizenJwtVerifier
             return null;
         }
 
+        // Hanya ACCESS token. ID token dan refresh token yang diterbitkan realm
+        // yang sama juga bertanda tangan sah dan lolos pemeriksaan issuer;
+        // Keycloak membedakannya lewat klaim `typ` ("Bearer", "ID",
+        // "Refresh"). Audit keamanan 15 Oktober 2026, temuan R1: ID token dapat
+        // berpindah tangan lewat jalur yang tidak dimaksudkan sebagai kredensial
+        // API (mis. `id_token_hint` saat logout, atau aplikasi lain di realm
+        // pegawai yang meneruskannya), dan audience-nya tidak sama dengan
+        // access token.
+        if (! self::isAccessToken($claims)) {
+            Log::debug('nawasara-api: JWT bukan access token', ['typ' => $claims['typ'] ?? null]);
+
+            return null;
+        }
+
         // Tanda tangan sah TIDAK cukup. Token yang diterbitkan realm lain di
         // server Keycloak yang sama juga bertanda tangan sah — issuer harus
         // dicocokkan, kalau tidak pegawai bisa memakai tokennya untuk
@@ -166,21 +180,72 @@ class CitizenJwtVerifier
     }
 
     /**
+     * Apakah klaim ini milik ACCESS token Keycloak.
+     *
+     * Keycloak menulis `typ: "Bearer"` pada access token (termasuk access
+     * token ringan dan token service account), `"ID"` pada ID token, dan
+     * `"Refresh"` pada refresh token. Dibandingkan persis, peka huruf: nilai
+     * itu konstanta Keycloak, bukan masukan manusia.
+     */
+    public static function isAccessToken(array $claims): bool
+    {
+        return ($claims['typ'] ?? null) === 'Bearer';
+    }
+
+    /**
+     * Proses ini sudah memperingatkan daftar client kosong untuk cabang
+     * config mana saja. Statis supaya peringatannya muncul SEKALI per proses
+     * (worker PHP-FPM / Octane), bukan sekali per permintaan.
+     *
+     * @var array<string, true>
+     */
+    protected static array $warnedEmptyClients = [];
+
+    /**
      * Audience yang diterima.
      *
      * Keycloak sering menaruh nama client di `azp` dan `account` di `aud`,
      * sehingga memeriksa `aud` saja menolak token yang sebenarnya sah. Kedua
-     * claim diperiksa. Bila daftar client di config kosong, pemeriksaan ini
-     * dilewati — issuer sudah menyempitkan asal token ke satu realm.
+     * claim diperiksa.
+     *
+     * Bila daftar client di config kosong: diterima (issuer sudah
+     * menyempitkan asal token ke satu realm), KECUALI
+     * `enforce_allowed_clients` menyala. Audit keamanan 15 Oktober 2026,
+     * temuan S12: di realm pegawai yang dipakai banyak aplikasi, daftar kosong
+     * berarti token aplikasi mana pun diterima sebagai token panel. Penolakan
+     * tidak dijadikan bawaan karena produksi yang belum mengisi daftarnya akan
+     * langsung menolak seluruh panel; sebagai gantinya kondisi itu
+     * diperingatkan di log.
      */
     protected function audienceAllowed(array $claims): bool
     {
-        $allowed = array_filter((array) config("nawasara-api.{$this->configKey}.allowed_clients", []));
+        $allowed = array_values(array_filter((array) config("nawasara-api.{$this->configKey}.allowed_clients", [])));
 
         if ($allowed === []) {
+            if ((bool) config("nawasara-api.{$this->configKey}.enforce_allowed_clients", false)) {
+                return false;
+            }
+
+            if (! isset(self::$warnedEmptyClients[$this->configKey])) {
+                self::$warnedEmptyClients[$this->configKey] = true;
+
+                Log::warning("nawasara-api: daftar client JWT '{$this->configKey}' kosong, token dari client mana pun di realm ini diterima. Isi allowed_clients (env NAWASARA_".strtoupper($this->configKey).'_KC_CLIENTS).');
+            }
+
             return true;
         }
 
+        return self::clientAllowed($claims, $allowed);
+    }
+
+    /**
+     * Pencocokan murni `azp`/`aud` terhadap daftar client yang TIDAK kosong.
+     * Dipisah supaya dapat diuji tanpa config dan log.
+     *
+     * @param  list<string>  $allowed
+     */
+    public static function clientAllowed(array $claims, array $allowed): bool
+    {
         $aud = (array) ($claims['aud'] ?? []);
         $azp = $claims['azp'] ?? null;
 

@@ -83,3 +83,32 @@ Nginx proxy_pass → http://go2rtc:1984/api/ws?src=cam-01
 ```
 
 The implementation lives in the domain package (`nawasara/cctv` M3).
+
+## Keycloak JWT paths (`api.citizen`, `api.staff`)
+
+Besides `nws_` tokens there are two JWT paths, verified locally against the realm's JWKS: `api.citizen` (citizen realm, mobile app) and `api.staff` (employee realm, admin panel). Both accept **access tokens only**: the `typ` claim must be `Bearer`, so Keycloak ID tokens and refresh tokens are rejected even though they carry a valid signature and issuer (security audit 15 October 2026, finding R1).
+
+### Environment
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `NAWASARA_STAFF_KC_URL` | `https://kisara.ponorogo.go.id` | Keycloak base URL for the employee realm |
+| `NAWASARA_STAFF_KC_REALM` | `asn-productions` | Employee realm |
+| `NAWASARA_STAFF_KC_CLIENTS` | *(empty)* | Comma-separated client ids whose tokens are accepted on `api.staff`, matched against `azp` and `aud` |
+| `NAWASARA_STAFF_KC_ENFORCE_CLIENTS` | `false` | `true` = an empty client list rejects every staff token (fail-closed) |
+| `NAWASARA_CITIZEN_KC_CLIENTS` | `pramana-mobile` | Same, for `api.citizen` |
+| `NAWASARA_CITIZEN_KC_ENFORCE_CLIENTS` | `false` | Same, for `api.citizen` |
+
+**Set `NAWASARA_STAFF_KC_CLIENTS` in every environment.** The employee realm serves many applications, and with an empty list a token issued to *any* of them is accepted as a panel token (finding S12). An empty list is not rejected by default, because doing so would lock the panel out of a deployment that has not set the variable yet; instead the verifier logs a warning once per process. Once the list is set and verified (check the `azp` claim of a real panel token), turn on `NAWASARA_STAFF_KC_ENFORCE_CLIENTS=true`.
+
+## Pre-auth rate limit
+
+All three auth middlewares (`api.auth`, `api.citizen`, `api.staff`) start with a per-IP limiter (`Support\AuthAbuseGuard`) before any token is read (finding S14). It lives inside the middleware, not in each route group, so every package that uses these aliases is covered without changes.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `NAWASARA_API_PREAUTH_PER_MINUTE` | `600` | All requests per IP per minute. Deliberately loose: many phones share one carrier IP (CGNAT) |
+| `NAWASARA_API_PREAUTH_FAILURES_PER_MINUTE` | `60` | 401 responses per IP per minute; above this the IP gets `429` without its token being checked |
+| `NAWASARA_API_DENIAL_LOGS_PER_MINUTE` | `10` | Denials per IP per minute written to `api_access_logs`; the rest are dropped. `0` = log none |
+
+`0` disables the respective limit. The `429` body uses the usual shape: `{"error": {"code": "too_many_requests", "message": "..."}}` with a `Retry-After` header. The per-citizen limiter `throttle:nawasara-citizen` (keyed by `sub`) still runs after authentication.

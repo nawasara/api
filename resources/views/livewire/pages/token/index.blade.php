@@ -4,7 +4,7 @@
             title="API Tokens"
             description="Token akses untuk aplikasi consumer eksternal. Setiap token punya scope per-resource & bisa di-revoke."
             :count="$this->stats['total'].' token'">
-            <x-nawasara-ui::button color="primary" wire:click="openCreate" permission="api.token.create">
+            <x-nawasara-ui::button color="primary" wire:click="openCreate" permission="api.token.grant">
                 <x-slot:icon><x-lucide-plus class="size-4" /></x-slot:icon>
                 Generate Token
             </x-nawasara-ui::button>
@@ -32,7 +32,7 @@
         @if ($this->tokens->isEmpty())
             <x-nawasara-ui::empty-state icon="lucide-key-square" title="Belum ada API token"
                 description="Generate token pertama untuk consumer eksternal. Setiap token bisa diatur scope-nya per resource.">
-                <x-nawasara-ui::button color="primary" wire:click="openCreate" permission="api.token.create">
+                <x-nawasara-ui::button color="primary" wire:click="openCreate" permission="api.token.grant">
                     <x-slot:icon><x-lucide-plus class="size-4" /></x-slot:icon>
                     Generate Token
                 </x-nawasara-ui::button>
@@ -110,9 +110,12 @@
                             </td>
                             <td class="px-6 py-4">
                                 <div class="flex justify-end gap-1">
-                                    @can('api.token.create')
+                                    {{-- Audit keamanan 15 Oktober 2026: memberi scope butuh api.token.grant. --}}
+                                    @can('api.token.grant')
                                         <x-nawasara-ui::icon-button icon="settings-2" tooltip="Ubah scope"
                                             wire:click="openEditScopes({{ $token->id }})" />
+                                    @endcan
+                                    @can('api.token.create')
                                         <x-nawasara-ui::icon-button icon="shield"
                                             tooltip="{{ $token->allowed_ips ? 'IP allow-list aktif — '.count($token->allowed_ips).' entri' : 'IP allow-list kosong (boleh dari mana saja)' }}"
                                             wire:click="openEditIps({{ $token->id }})" />

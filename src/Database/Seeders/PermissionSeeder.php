@@ -15,6 +15,11 @@ class PermissionSeeder extends Seeder
             'api.token.view',
             'api.token.create',
             'api.token.revoke',
+            // Memberi scope saat membuat token atau mengubah scope-nya. Dipisah
+            // dari api.token.create karena scope belum dipetakan ke izin
+            // Spatie: pemegangnya dapat memberi scope apa pun (audit keamanan
+            // 15 Oktober 2026, S6).
+            'api.token.grant',
         ];
 
         foreach ($permissions as $permission) {

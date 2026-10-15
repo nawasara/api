@@ -4,6 +4,7 @@ namespace Nawasara\Api\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Nawasara\Api\Http\Middleware\Concerns\GuardsAuthAbuse;
 use Nawasara\Api\Models\ApiAccessLog;
 use Nawasara\Api\Services\CitizenJwtVerifier;
 use Symfony\Component\HttpFoundation\Response;
@@ -31,12 +32,20 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class AuthenticateCitizenJwt
 {
+    use GuardsAuthAbuse;
+
     public function __construct(
         protected CitizenJwtVerifier $verifier,
     ) {}
 
     public function handle(Request $request, Closure $next): Response
     {
+        // Rem per IP SEBELUM token diperiksa (audit keamanan 15 Oktober 2026,
+        // temuan S14). Lihat AuthAbuseGuard.
+        if ($throttled = $this->throttleBeforeAuth($request)) {
+            return $throttled;
+        }
+
         $token = $this->extractToken($request);
 
         if ($token === null) {
@@ -103,24 +112,29 @@ class AuthenticateCitizenJwt
      */
     protected function deny(Request $request, string $code, string $message): Response
     {
-        try {
-            ApiAccessLog::create([
-                // null: tidak ada baris ApiToken untuk warga. Kolomnya memang
-                // nullable — lihat migrasi.
-                'api_token_id' => null,
-                'method' => $request->method(),
-                // Dipotong 512 seperti jalur nws_: kolomnya string(512), dan
-                // path panjang akan membuat INSERT gagal, sehingga penolakan
-                // yang seharusnya tercatat malah hilang.
-                'path' => substr($request->path(), 0, 512),
-                'status' => 401,
-                'kind' => ApiAccessLog::KIND_API,
-                'ip' => $request->ip(),
-                'user_agent' => substr((string) $request->userAgent(), 0, 512),
-            ]);
-        } catch (\Throwable) {
-            // Kegagalan mencatat log TIDAK boleh menjatuhkan permintaan.
-            // Penolakannya sendiri lebih penting daripada catatannya.
+        // Dicatat dengan batas per IP (audit keamanan 15 Oktober 2026, temuan
+        // S14). Sebelumnya setiap penolakan menjadi satu INSERT, sehingga token
+        // palsu yang dikirim terus-menerus dapat membanjiri `api_access_logs`.
+        if ($this->shouldRecordDenial($request, 401)) {
+            try {
+                ApiAccessLog::create([
+                    // null: tidak ada baris ApiToken untuk warga. Kolomnya memang
+                    // nullable — lihat migrasi.
+                    'api_token_id' => null,
+                    'method' => $request->method(),
+                    // Dipotong 512 seperti jalur nws_: kolomnya string(512), dan
+                    // path panjang akan membuat INSERT gagal, sehingga penolakan
+                    // yang seharusnya tercatat malah hilang.
+                    'path' => substr($request->path(), 0, 512),
+                    'status' => 401,
+                    'kind' => ApiAccessLog::KIND_API,
+                    'ip' => $request->ip(),
+                    'user_agent' => substr((string) $request->userAgent(), 0, 512),
+                ]);
+            } catch (\Throwable) {
+                // Kegagalan mencatat log TIDAK boleh menjatuhkan permintaan.
+                // Penolakannya sendiri lebih penting daripada catatannya.
+            }
         }
 
         return response()->json([
