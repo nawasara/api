@@ -14,8 +14,11 @@ use Livewire\Livewire;
 use Nawasara\Api\Console\Commands\PruneAccessLogsCommand;
 use Nawasara\Api\Http\Middleware\AuthenticateApiToken;
 use Nawasara\Api\Http\Middleware\AuthenticateCitizenJwt;
+use Nawasara\Api\Http\Middleware\AuthenticateStaffIdentity;
 use Nawasara\Api\Http\Middleware\AuthenticateStaffJwt;
 use Nawasara\Api\Http\Middleware\LogApiAccess;
+use Nawasara\Api\Http\Middleware\RequireClient;
+use Nawasara\Api\Http\Middleware\RequireRecentAuth;
 use Nawasara\Api\Http\Middleware\RequireScope;
 use Nawasara\Api\Services\CitizenJwtVerifier;
 use Nawasara\Api\Services\StreamUrlSigner;
@@ -132,6 +135,9 @@ class ApiServiceProvider extends ServiceProvider
      *   - api.log   → log akses ke api_access_logs
      *   - api.citizen → JWT realm warga
      *   - api.staff   → JWT realm pegawai (panel Next.js)
+     *   - api.staff.identity → JWT realm pegawai tanpa syarat baris users (Akun ASN)
+     *   - api.client       → batasi rute ke client tertentu lewat `azp`
+     *   - api.recent-auth  → tuntut login segar lewat `auth_time`
      */
     protected function registerMiddleware(Router $router): void
     {
@@ -163,6 +169,16 @@ class ApiServiceProvider extends ServiceProvider
         //
         // Pernah diusulkan sebagai penambal cepat 19 Agustus 2026.
         $router->aliasMiddleware('api.staff', AuthenticateStaffJwt::class);
+
+        // Staf TANPA syarat baris `users`, untuk layanan yang melayani seluruh
+        // ASN (Akun ASN). Identitas hanya `sub`; tidak ada Auth::setUser().
+        $router->aliasMiddleware('api.staff.identity', AuthenticateStaffIdentity::class);
+
+        // Pembatas tambahan per rute, dipasang SESUDAH salah satu jalur JWT:
+        //   api.client:<client>      hanya token yang `azp`-nya client itu
+        //   api.recent-auth:<detik>  hanya login yang lebih muda dari <detik>
+        $router->aliasMiddleware('api.client', RequireClient::class);
+        $router->aliasMiddleware('api.recent-auth', RequireRecentAuth::class);
     }
 
     /**

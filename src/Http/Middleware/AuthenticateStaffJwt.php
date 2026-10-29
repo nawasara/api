@@ -52,6 +52,47 @@ class AuthenticateStaffJwt
 
     public function handle(Request $request, Closure $next): Response
     {
+        $claims = $this->authenticate($request);
+
+        if ($claims instanceof Response) {
+            return $claims;
+        }
+
+        $user = $this->resolveUser($claims);
+
+        if ($user === null) {
+            // 403, bukan 401: tokennya SAH, orangnya saja yang belum terdaftar
+            // di aplikasi ini. Menjawab 401 akan membuat panel mengira sesinya
+            // kedaluwarsa lalu memaksa masuk ulang tanpa henti.
+            return $this->deny($request, 'not_registered',
+                'Akun Anda belum terdaftar di aplikasi ini. Hubungi admin untuk didaftarkan.',
+                403);
+        }
+
+        // Menyalakan pengguna untuk permintaan ini saja — tanpa sesi, tanpa
+        // cookie. Sesudah baris ini, `can()` dan `ScopedToOpd` bekerja seperti
+        // biasa.
+        Auth::setUser($user);
+
+        $request->attributes->set('staff_sub', $claims['sub']);
+        $request->attributes->set('staff_claims', $claims);
+
+        return $next($request);
+    }
+
+    /**
+     * Rem, ambil token, verifikasi. Kembalikan claim bila sah, atau respons
+     * penolakan.
+     *
+     * Dipisah dari handle() supaya AuthenticateStaffIdentity memakai
+     * pemeriksaan yang PERSIS sama tanpa menyalinnya. Dua salinan pemeriksaan
+     * keamanan berarti setiap temuan audit harus ditambal dua kali, dan yang
+     * kedua biasanya terlupa.
+     *
+     * @return array<string, mixed>|Response
+     */
+    protected function authenticate(Request $request): array|Response
+    {
         // Rem per IP SEBELUM token diperiksa (audit keamanan 15 Oktober 2026,
         // temuan S14). Lihat AuthAbuseGuard.
         if ($throttled = $this->throttleBeforeAuth($request)) {
@@ -80,26 +121,7 @@ class AuthenticateStaffJwt
                 'Token tidak valid atau sudah kedaluwarsa. Silakan masuk kembali.');
         }
 
-        $user = $this->resolveUser($claims);
-
-        if ($user === null) {
-            // 403, bukan 401: tokennya SAH, orangnya saja yang belum terdaftar
-            // di aplikasi ini. Menjawab 401 akan membuat panel mengira sesinya
-            // kedaluwarsa lalu memaksa masuk ulang tanpa henti.
-            return $this->deny($request, 'not_registered',
-                'Akun Anda belum terdaftar di aplikasi ini. Hubungi admin untuk didaftarkan.',
-                403);
-        }
-
-        // Menyalakan pengguna untuk permintaan ini saja — tanpa sesi, tanpa
-        // cookie. Sesudah baris ini, `can()` dan `ScopedToOpd` bekerja seperti
-        // biasa.
-        Auth::setUser($user);
-
-        $request->attributes->set('staff_sub', $claims['sub']);
-        $request->attributes->set('staff_claims', $claims);
-
-        return $next($request);
+        return $claims;
     }
 
     /**

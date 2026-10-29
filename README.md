@@ -101,6 +101,25 @@ Besides `nws_` tokens there are two JWT paths, verified locally against the real
 
 **Set `NAWASARA_STAFF_KC_CLIENTS` in every environment.** The employee realm serves many applications, and with an empty list a token issued to *any* of them is accepted as a panel token (finding S12). An empty list is not rejected by default, because doing so would lock the panel out of a deployment that has not set the variable yet; instead the verifier logs a warning once per process. Once the list is set and verified (check the `azp` claim of a real panel token), turn on `NAWASARA_STAFF_KC_ENFORCE_CLIENTS=true`.
 
+### Staff without a `users` row (`api.staff.identity`)
+
+`api.staff` maps the token to a local `users` row and answers 403 `not_registered` when there is none. That is right for the panel, but most civil servants never open the panel, so a service for *every* ASN (the ASN account portal) cannot use it.
+
+`api.staff.identity` runs exactly the same token checks (it extends `AuthenticateStaffJwt`), then only sets the `staff_sub` and `staff_claims` request attributes. It never calls `Auth::setUser()`, even when a `users` row exists: an account endpoint must not inherit the panel's Spatie permissions. Endpoints behind it take the identity from `staff_sub`, never from a parameter.
+
+### Per-route guards
+
+Put these **after** one of the JWT middlewares:
+
+| Alias | Example | Effect |
+|---|---|---|
+| `api.client` | `api.client:asn-portal` | Only tokens whose `azp` is one of the listed clients. 403 `client_not_allowed` otherwise; no parameter rejects everything |
+| `api.recent-auth` | `api.recent-auth:300` | Only logins newer than N seconds (default 300), by the `auth_time` claim. 401 `reauth_required` with `max_age`; the caller re-authenticates with `max_age=0` and retries |
+
+Why `api.client` checks **`azp` only** while the verifier's `allowed_clients` also accepts `aud`: the employee realm installs audience mappers that put other clients' names into `aud`, so a token issued to a different application can carry the portal's name in `aud`. `azp` is the client that actually requested the token.
+
+`api.recent-auth` treats a token **without** `auth_time` as stale. Keycloak 25+ puts it in the access token through the `basic` client scope; a client without that scope will always be asked to sign in again, and the fix is the client configuration, not this middleware.
+
 ## Pre-auth rate limit
 
 All three auth middlewares (`api.auth`, `api.citizen`, `api.staff`) start with a per-IP limiter (`Support\AuthAbuseGuard`) before any token is read (finding S14). It lives inside the middleware, not in each route group, so every package that uses these aliases is covered without changes.
